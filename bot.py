@@ -133,6 +133,27 @@ async def ddg(query: str, max_results: int = 8) -> list[dict]:
     )
     return parse_ddg(html, max_results) if html else []
 
+# ── Crypto relevance filter ───────────────────────────────────────────────────
+
+CRYPTO_TERMS = {
+    "crypto", "cryptocurrency", "bitcoin", "btc", "ethereum", "eth", "blockchain",
+    "web3", "defi", "nft", "token", "altcoin", "ico", "ido", "dao", "dex", "cefi",
+    "investor", "venture", "vc", "fund", "fintech", "startup", "angel",
+    "coinbase", "binance", "kraken", "solana", "polygon", "avalanche",
+    "инвестор", "криптовалюта", "блокчейн", "инвестиции", "стартап",
+}
+
+def is_crypto_relevant(r: dict) -> bool:
+    """Возвращает True только если результат реально связан с крипто/инвест тематикой."""
+    haystack = (r.get("title", "") + " " + r.get("snippet", "")).lower()
+    return any(term in haystack for term in CRYPTO_TERMS)
+
+def clean_title(title: str, *remove_suffixes: str) -> str:
+    """Убирает шаблонные суффиксы из заголовков (- LinkedIn, | Crunchbase и т.д.)"""
+    for suffix in remove_suffixes:
+        title = re.sub(rf"\s*[\|—\-]\s*{re.escape(suffix)}.*", "", title, flags=re.I)
+    return title.strip()
+
 # ── Search sources ────────────────────────────────────────────────────────────
 
 async def search_cryptorank(name: str) -> list[dict]:
@@ -161,57 +182,86 @@ async def search_cryptorank(name: str) -> list[dict]:
 
 async def search_linkedin(name: str) -> list[dict]:
     found = []
-    for r in await ddg(f'"{name}" site:linkedin.com/in', max_results=5):
-        if "linkedin.com/in/" in r["url"]:
-            clean = re.sub(r"\s*[\|—\-]\s*LinkedIn.*", "", r["title"]).strip()
-            found.append({"source": "LinkedIn", "name": clean, "url": r["url"], "snippet": r.get("snippet", "")})
+    # Ищем с крипто-контекстом — только реальные крипто-профили
+    for r in await ddg(
+        f'"{name}" site:linkedin.com/in crypto OR blockchain OR web3 OR investor OR fintech OR DeFi OR venture',
+        max_results=5,
+    ):
+        if "linkedin.com/in/" not in r["url"]:
+            continue
+        if not is_crypto_relevant(r):
+            continue
+        clean = clean_title(r["title"], "LinkedIn", "| LinkedIn")
+        found.append({"source": "LinkedIn", "name": clean, "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
 async def search_twitter(name: str) -> list[dict]:
     found = []
-    for r in await ddg(f'"{name}" (site:twitter.com OR site:x.com) crypto OR bitcoin OR web3 OR investor', max_results=4):
-        if "twitter.com/" in r["url"] or "x.com/" in r["url"]:
-            found.append({"source": "Twitter/X", "name": r["title"], "url": r["url"], "snippet": r.get("snippet", "")})
+    for r in await ddg(
+        f'"{name}" (site:twitter.com OR site:x.com) crypto OR bitcoin OR web3 OR investor OR blockchain',
+        max_results=4,
+    ):
+        if "twitter.com/" not in r["url"] and "x.com/" not in r["url"]:
+            continue
+        if not is_crypto_relevant(r):
+            continue
+        found.append({"source": "Twitter/X", "name": clean_title(r["title"], "on X", "on Twitter"), "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
 async def search_crunchbase(name: str) -> list[dict]:
     found = []
     for r in await ddg(f'"{name}" site:crunchbase.com/person', max_results=4):
-        if "crunchbase.com/person/" in r["url"]:
-            clean = re.sub(r"\s*[\|—\-]\s*Crunchbase.*", "", r["title"]).strip()
-            found.append({"source": "Crunchbase", "name": clean, "url": r["url"], "snippet": r.get("snippet", "")})
+        if "crunchbase.com/person/" not in r["url"]:
+            continue
+        # Crunchbase уже подразумевает стартап/инвест контекст, но проверим
+        if not is_crypto_relevant(r):
+            continue
+        found.append({"source": "Crunchbase", "name": clean_title(r["title"], "Crunchbase"), "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
 async def search_angellist(name: str) -> list[dict]:
     found = []
-    for r in await ddg(f'"{name}" site:wellfound.com OR site:angel.co', max_results=3):
-        if "wellfound.com/" in r["url"] or "angel.co/" in r["url"]:
-            found.append({"source": "AngelList", "name": r["title"], "url": r["url"], "snippet": r.get("snippet", "")})
+    for r in await ddg(f'"{name}" site:wellfound.com crypto OR blockchain OR web3 OR DeFi', max_results=3):
+        if "wellfound.com/" not in r["url"] and "angel.co/" not in r["url"]:
+            continue
+        if not is_crypto_relevant(r):
+            continue
+        found.append({"source": "AngelList", "name": clean_title(r["title"], "Wellfound", "AngelList"), "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
 async def search_github(name: str) -> list[dict]:
     found = []
-    for r in await ddg(f'"{name}" site:github.com blockchain OR web3 OR crypto', max_results=3):
-        if "github.com/" in r["url"] and "/commit/" not in r["url"] and "/issues/" not in r["url"]:
-            found.append({"source": "GitHub", "name": r["title"], "url": r["url"], "snippet": r.get("snippet", "")})
+    for r in await ddg(f'"{name}" site:github.com blockchain OR web3 OR crypto OR solidity OR ethereum', max_results=3):
+        if "github.com/" not in r["url"]:
+            continue
+        # Только профили пользователей, не репозитории и не issue
+        if any(x in r["url"] for x in ["/commit/", "/issues/", "/pull/", "/blob/"]):
+            continue
+        if not is_crypto_relevant(r):
+            continue
+        found.append({"source": "GitHub", "name": clean_title(r["title"], "GitHub"), "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
 async def search_articles(name: str, phone: str = "") -> list[dict]:
     kw = (
-        'crypto OR bitcoin OR BTC OR blockchain OR web3 OR investor '
-        'OR "venture capital" OR VC OR DeFi OR NFT OR fund OR startup OR fintech'
+        'crypto OR bitcoin OR BTC OR blockchain OR web3 OR DeFi OR NFT '
+        'OR "venture capital" OR VC OR fund OR fintech OR "crypto investor" OR "blockchain founder"'
     )
     queries = [f'"{name}" ({kw})']
     if phone:
-        queries.append(f'"{name}" "{phone}"')
+        queries.append(f'"{name}" "{phone}" crypto OR blockchain')
     seen, found = set(), []
-    for batch in await asyncio.gather(*[ddg(q, max_results=5) for q in queries], return_exceptions=True):
+    for batch in await asyncio.gather(*[ddg(q, max_results=6) for q in queries], return_exceptions=True):
         if not isinstance(batch, list):
             continue
         for r in batch:
-            if r["url"] not in seen:
-                seen.add(r["url"])
-                found.append({"source": "Article", **r})
+            if r["url"] in seen:
+                continue
+            # Строгий фильтр: крипто-слова должны быть и в заголовке/сниппете
+            if not is_crypto_relevant(r):
+                continue
+            seen.add(r["url"])
+            found.append({"source": "Article", **r})
     return found
 
 # ── Full parallel search ──────────────────────────────────────────────────────
@@ -230,68 +280,108 @@ async def full_search(name: str, phone: str = "") -> dict:
     return {k: (v if isinstance(v, list) else []) for k, v in zip(keys, results)}
 
 # ── Report formatting ─────────────────────────────────────────────────────────
-ICONS = {
-    "CryptoRank": "🟣", "LinkedIn": "🔵", "Twitter/X": "⚫",
-    "Crunchbase": "🟠", "AngelList": "🟢", "GitHub": "⬛", "Article": "🌐",
-}
 
-def fmt_hit(r: dict) -> str:
-    icon = ICONS.get(r["source"], "🔗")
-    line = f'{icon} <a href="{r["url"]}">{r.get("name") or r.get("title","")[:70]}</a>'
-    if r.get("snippet"):
-        line += f'\n   <i>{r["snippet"][:200]}</i>'
+def _label(r: dict) -> str:
+    """Возвращает читаемое имя/заголовок для отображения."""
+    return (r.get("name") or r.get("title") or "—")[:80]
+
+def _snip(r: dict, limit: int = 160) -> str:
+    s = r.get("snippet", "").strip()
+    if not s:
+        return ""
+    # Убираем лишние пробелы и переносы
+    s = re.sub(r"\s+", " ", s)
+    return s[:limit]
+
+def fmt_block(r: dict, icon: str) -> str:
+    label = _label(r)
+    snip  = _snip(r)
+    line  = f'{icon} <a href="{r["url"]}">{label}</a>'
+    if snip:
+        line += f"\n     <i>{snip}</i>"
     return line
 
 def build_report(name: str, phone: str, res: dict) -> str:
-    cr   = res.get("cr", [])
-    li   = res.get("linkedin", [])
-    tw   = res.get("twitter", [])
-    cb   = res.get("crunchbase", [])
-    al   = res.get("angellist", [])
-    gh   = res.get("github", [])
-    art  = res.get("articles", [])
-    total = sum(len(v) for v in res.values())
+    cr  = res.get("cr", [])
+    li  = res.get("linkedin", [])
+    tw  = res.get("twitter", [])
+    cb  = res.get("crunchbase", [])
+    al  = res.get("angellist", [])
+    gh  = res.get("github", [])
+    art = res.get("articles", [])
 
-    lines = [
-        f"<b>👤 {name}</b>" + (f"   <code>{phone}</code>" if phone else ""),
-        f"<i>Найдено: {total} результатов</i>",
-        "─" * 22,
-    ]
+    crypto_found = bool(cr or li or cb or al or tw or gh or art)
 
+    # ── Шапка ──
+    header = f"<b>👤 {name}</b>"
+    if phone:
+        header += f"   <code>{phone}</code>"
+
+    # Статус по CryptoRank
     if cr:
-        lines.append(f"🟣 <b>CryptoRank</b> — {len(cr)}:")
-        for r in cr[:3]: lines.append("  " + fmt_hit(r))
+        header += "\n🟣 <b>Есть на CryptoRank</b> ✅"
     else:
-        lines.append("🟣 <b>CryptoRank</b>: не найден")
+        header += "\n🟣 CryptoRank — не найден"
 
+    lines = [header, ""]
+
+    # ── CryptoRank профили ──
+    if cr:
+        lines.append("<b>Профили на CryptoRank:</b>")
+        for r in cr[:3]:
+            lines.append(fmt_block(r, "  ▸"))
+        lines.append("")
+
+    # ── LinkedIn ──
     if li:
-        lines.append(f"\n🔵 <b>LinkedIn</b> — {len(li)}:")
-        for r in li[:3]: lines.append("  " + fmt_hit(r))
+        lines.append("<b>LinkedIn:</b>")
+        for r in li[:3]:
+            lines.append(fmt_block(r, "  🔵"))
+        lines.append("")
 
+    # ── Crunchbase ──
     if cb:
-        lines.append(f"\n🟠 <b>Crunchbase</b> — {len(cb)}:")
-        for r in cb[:3]: lines.append("  " + fmt_hit(r))
+        lines.append("<b>Crunchbase:</b>")
+        for r in cb[:3]:
+            lines.append(fmt_block(r, "  🟠"))
+        lines.append("")
 
+    # ── AngelList ──
     if al:
-        lines.append(f"\n🟢 <b>AngelList / Wellfound</b> — {len(al)}:")
-        for r in al[:2]: lines.append("  " + fmt_hit(r))
+        lines.append("<b>AngelList / Wellfound:</b>")
+        for r in al[:2]:
+            lines.append(fmt_block(r, "  🟢"))
+        lines.append("")
 
+    # ── Twitter ──
     if tw:
-        lines.append(f"\n⚫ <b>Twitter / X</b> — {len(tw)}:")
-        for r in tw[:2]: lines.append("  " + fmt_hit(r))
+        lines.append("<b>Twitter / X:</b>")
+        for r in tw[:2]:
+            lines.append(fmt_block(r, "  ⚫"))
+        lines.append("")
 
+    # ── GitHub ──
     if gh:
-        lines.append(f"\n⬛ <b>GitHub</b> — {len(gh)}:")
-        for r in gh[:2]: lines.append("  " + fmt_hit(r))
+        lines.append("<b>GitHub:</b>")
+        for r in gh[:2]:
+            lines.append(fmt_block(r, "  ⬛"))
+        lines.append("")
 
+    # ── Статьи ──
     if art:
-        lines.append(f"\n🌐 <b>Статьи / упоминания</b> — {len(art)}:")
-        for r in art[:5]: lines.append("  " + fmt_hit(r))
+        lines.append("<b>Упоминания в крипто-СМИ:</b>")
+        for r in art[:5]:
+            lines.append(fmt_block(r, "  🌐"))
+        lines.append("")
 
-    if total == 0:
-        lines.append("\n⚠️ <i>Ничего не найдено. Проверь написание имени.</i>")
+    # ── Ничего не найдено ──
+    if not crypto_found:
+        lines.append(
+            "⚠️ <i>Открытых крипто-профилей не найдено.</i>\n"
+            "Возможно, человек не публичен или используй другое написание имени."
+        )
 
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
 
 def split_msg(text: str) -> list[str]:
     if len(text) <= 4096:
