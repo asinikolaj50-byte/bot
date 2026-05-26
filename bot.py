@@ -6,10 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, FSInputFile
-)
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardRemove, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 import httpx
 
@@ -26,7 +23,7 @@ dp  = Dispatcher(storage=MemoryStorage())
 CR_FILE = "cryptorank_results.json"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
@@ -35,7 +32,7 @@ class Search(StatesGroup):
     waiting_name  = State()
     waiting_phone = State()
 
-# ── Хранилище CryptoRank ──────────────────────────────────────────────────────
+# ── CryptoRank storage ────────────────────────────────────────────────────────
 def load_cr() -> list:
     try:
         if os.path.exists(CR_FILE):
@@ -47,72 +44,75 @@ def load_cr() -> list:
 
 def save_cr(entry: dict):
     data = load_cr()
-    if entry["name"].lower() not in {r.get("name","").lower() for r in data}:
+    if entry["name"].lower() not in {r.get("name", "").lower() for r in data}:
         data.append(entry)
         with open(CR_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ── Клавиатуры ────────────────────────────────────────────────────────────────
-def main_kb() -> ReplyKeyboardMarkup:
-    kb = ReplyKeyboardBuilder()
-    kb.button(text="🔍 Найти человека")
-    kb.button(text="📂 Загрузить базу")
-    kb.button(text="📋 CryptoRank список")
-    kb.button(text="❓ Помощь")
-    kb.adjust(2, 2)
-    return kb.as_markup(resize_keyboard=True)
+# ── Keyboards ─────────────────────────────────────────────────────────────────
 
-def cancel_kb() -> ReplyKeyboardMarkup:
-    kb = ReplyKeyboardBuilder()
-    kb.button(text="❌ Отмена")
-    return kb.as_markup(resize_keyboard=True)
+def main_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔍 Найти человека",       callback_data="start_search")
+    kb.button(text="📂 Загрузить базу",        callback_data="upload_info")
+    kb.button(text="📋 Найдены на CryptoRank", callback_data="show_found")
+    kb.button(text="❓ Помощь",               callback_data="show_help")
+    kb.adjust(2, 2)
+    return kb.as_markup()
+
+def phone_kb(name: str) -> InlineKeyboardMarkup:
+    """Кнопки вместо текстового ввода телефона."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➡️ Пропустить (телефона нет)", callback_data="phone_skip")
+    kb.button(text="❌ Отмена",                     callback_data="cancel")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def confirm_search_kb(name: str, phone: str) -> InlineKeyboardMarkup:
+    """Подтверждение перед поиском."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Искать",  callback_data="confirm_search")
+    kb.button(text="❌ Отмена", callback_data="cancel")
+    kb.adjust(2)
+    return kb.as_markup()
 
 def result_links_kb(name: str) -> InlineKeyboardMarkup:
     q  = urllib.parse.quote(name)
     q2 = name.replace(" ", "+")
     kb = InlineKeyboardBuilder()
-    kb.button(text="🟣 CryptoRank",  url=f"https://cryptorank.io/people?search={q}")
-    kb.button(text="🔵 LinkedIn",    url=f"https://www.linkedin.com/search/results/people/?keywords={q}")
-    kb.button(text="🔴 VKontakte",   url=f"https://vk.com/search?c%5Bq%5D={q}&c%5Bsection%5D=people")
-    kb.button(text="⚫ Twitter/X",   url=f"https://twitter.com/search?q=%22{q}%22+crypto")
-    kb.button(text="🟡 Google",      url=f"https://www.google.com/search?q=%22{q2}%22+crypto+OR+bitcoin")
-    kb.button(text="🟠 Yandex",      url=f"https://yandex.ru/search/?text=%22{q2}%22+крипто+OR+инвест")
-    kb.button(text="🏢 HH.ru",       url=f"https://hh.ru/search/resume?text={q}")
-    kb.button(text="📊 RusProfile",  url=f"https://www.rusprofile.ru/search?query={q}&type=fiz")
+    kb.button(text="🟣 CryptoRank",   url=f"https://cryptorank.io/people?search={q}")
+    kb.button(text="🔵 LinkedIn",     url=f"https://www.linkedin.com/search/results/people/?keywords={q}")
+    kb.button(text="⚫ Twitter / X",  url=f"https://twitter.com/search?q=%22{q}%22+crypto")
+    kb.button(text="🟠 Crunchbase",   url=f"https://www.crunchbase.com/search/people/field/persons/facet_ids/{q2}")
+    kb.button(text="🟢 AngelList",    url=f"https://wellfound.com/search?q={q}")
+    kb.button(text="🔗 Google",       url=f"https://www.google.com/search?q=%22{q2}%22+crypto+OR+bitcoin+OR+web3")
+    kb.button(text="🔍 Новый поиск",  callback_data="start_search")
+    kb.button(text="🏠 Меню",         callback_data="main_menu")
     kb.adjust(2, 2, 2, 2)
     return kb.as_markup()
 
-# ── HTTP клиент ───────────────────────────────────────────────────────────────
+def back_menu_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🏠 Главное меню", callback_data="main_menu")
+    kb.adjust(1)
+    return kb.as_markup()
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
 async def fetch(url: str, *, method="GET", data=None, timeout=15.0) -> str | None:
     try:
-        async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=True, headers=HEADERS
-        ) as client:
-            if method == "POST":
-                r = await client.post(url, data=data)
-            else:
-                r = await client.get(url)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=HEADERS) as client:
+            r = await client.post(url, data=data) if method == "POST" else await client.get(url)
             if r.status_code == 200:
                 return r.text
     except Exception as e:
-        print(f"[fetch error] {url}: {e}")
+        print(f"[fetch] {url}: {e}")
     return None
 
-# ── Парсинг DDG ───────────────────────────────────────────────────────────────
-def parse_ddg_html(html: str, max_results: int = 8) -> list[dict]:
-    results = []
-    seen = set()
-
-    # Попытка 1: блоки result__body
-    links = re.findall(
-        r'class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
-        html, re.DOTALL
-    )
-    snippets = re.findall(
-        r'class="result__snippet"[^>]*>(.*?)</(?:span|a|div)>',
-        html, re.DOTALL
-    )
-
+# ── DDG parser ────────────────────────────────────────────────────────────────
+def parse_ddg(html: str, max_results: int = 8) -> list[dict]:
+    seen, out = set(), []
+    links    = re.findall(r'class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, re.DOTALL)
+    snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</(?:span|a|div)>', html, re.DOTALL)
     for i, (href, title_html) in enumerate(links[:max_results]):
         title = re.sub(r"<[^>]+>", "", title_html).strip()
         if "uddg=" in href:
@@ -120,256 +120,178 @@ def parse_ddg_html(html: str, max_results: int = 8) -> list[dict]:
         if not href.startswith("http") or not title or href in seen:
             continue
         seen.add(href)
-        snippet = re.sub(r"<[^>]+>", "", snippets[i]).strip()[:250] if i < len(snippets) else ""
-        results.append({"title": title, "url": href, "snippet": snippet})
-
-    return results
+        snip = re.sub(r"<[^>]+>", "", snippets[i]).strip()[:250] if i < len(snippets) else ""
+        out.append({"title": title, "url": href, "snippet": snip})
+    return out
 
 async def ddg(query: str, max_results: int = 8) -> list[dict]:
     html = await fetch(
         "https://html.duckduckgo.com/html/",
         method="POST",
-        data={"q": query, "b": "", "kl": "ru-ru"},
+        data={"q": query, "b": "", "kl": "en-us"},
         timeout=20.0,
     )
-    if not html:
-        return []
-    return parse_ddg_html(html, max_results)
+    return parse_ddg(html, max_results) if html else []
 
-# ── Источники поиска ──────────────────────────────────────────────────────────
+# ── Search sources ────────────────────────────────────────────────────────────
 
 async def search_cryptorank(name: str) -> list[dict]:
     found = []
-
     # DDG site:cryptorank.io
-    results = await ddg(f'"{name}" site:cryptorank.io', max_results=4)
-    for r in results:
-        if "cryptorank.io" in r["url"] and "/people" in r["url"]:
-            found.append({
-                "source": "CryptoRank",
-                "name": name,
-                "url": r["url"],
-                "snippet": r.get("snippet", ""),
-            })
-
-    # Прямая страница поиска CryptoRank
+    for r in await ddg(f'"{name}" site:cryptorank.io/people', max_results=4):
+        if "cryptorank.io" in r["url"]:
+            found.append({"source": "CryptoRank", "name": name, "url": r["url"], "snippet": r.get("snippet", "")})
+    # Direct page scrape
     html = await fetch(f"https://cryptorank.io/people?search={urllib.parse.quote(name)}")
     if html:
-        # Ищем ссылки на профили людей
-        profiles = re.findall(r'href="(/people/[^"]+)"', html)
-        for slug in list(dict.fromkeys(profiles))[:3]:
+        for slug in list(dict.fromkeys(re.findall(r'href="(/people/[^"?#]+)"', html)))[:3]:
             url = f"https://cryptorank.io{slug}"
-            if url not in [r["url"] for r in found]:
-                # Пытаемся вытащить имя и должность с профиля
-                phtml = await fetch(url)
-                snippet = ""
-                if phtml:
-                    name_m = re.search(r'<h1[^>]*>([^<]+)</h1>', phtml)
-                    role_m = re.search(r'<div[^>]*class="[^"]*role[^"]*"[^>]*>([^<]+)</div>', phtml, re.I)
-                    if name_m:
-                        snippet = name_m.group(1).strip()
-                    if role_m:
-                        snippet += " · " + role_m.group(1).strip()
-                found.append({"source": "CryptoRank", "name": name, "url": url, "snippet": snippet})
-
+            if url in [r["url"] for r in found]:
+                continue
+            snippet = ""
+            phtml = await fetch(url)
+            if phtml:
+                m1 = re.search(r'<h1[^>]*>([^<]+)</h1>', phtml)
+                m2 = re.search(r'"jobTitle"\s*:\s*"([^"]+)"', phtml)
+                m3 = re.search(r'"worksFor"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"', phtml)
+                parts = [x.group(1).strip() for x in [m1, m2, m3] if x]
+                snippet = " · ".join(parts)
+            found.append({"source": "CryptoRank", "name": name, "url": url, "snippet": snippet})
     return found
-
 
 async def search_linkedin(name: str) -> list[dict]:
-    results = await ddg(f'"{name}" site:linkedin.com/in', max_results=4)
     found = []
-    for r in results:
+    for r in await ddg(f'"{name}" site:linkedin.com/in', max_results=5):
         if "linkedin.com/in/" in r["url"]:
-            found.append({
-                "source": "LinkedIn",
-                "name": r["title"].replace(" | LinkedIn", "").replace(" - LinkedIn", "").strip(),
-                "url": r["url"],
-                "snippet": r.get("snippet", ""),
-            })
+            clean = re.sub(r"\s*[\|—\-]\s*LinkedIn.*", "", r["title"]).strip()
+            found.append({"source": "LinkedIn", "name": clean, "url": r["url"], "snippet": r.get("snippet", "")})
     return found
-
-
-async def search_vk(name: str) -> list[dict]:
-    results = await ddg(f'"{name}" site:vk.com', max_results=4)
-    found = []
-    for r in results:
-        if "vk.com/" in r["url"] and "/wall" not in r["url"] and "/photo" not in r["url"]:
-            found.append({
-                "source": "VKontakte",
-                "name": r["title"],
-                "url": r["url"],
-                "snippet": r.get("snippet", ""),
-            })
-    return found
-
 
 async def search_twitter(name: str) -> list[dict]:
-    results = await ddg(f'"{name}" site:twitter.com OR site:x.com crypto OR bitcoin OR web3', max_results=3)
     found = []
-    for r in results:
+    for r in await ddg(f'"{name}" (site:twitter.com OR site:x.com) crypto OR bitcoin OR web3 OR investor', max_results=4):
         if "twitter.com/" in r["url"] or "x.com/" in r["url"]:
-            found.append({
-                "source": "Twitter/X",
-                "name": r["title"],
-                "url": r["url"],
-                "snippet": r.get("snippet", ""),
-            })
+            found.append({"source": "Twitter/X", "name": r["title"], "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
-
-async def search_hh(name: str) -> list[dict]:
-    results = await ddg(f'"{name}" site:hh.ru', max_results=3)
+async def search_crunchbase(name: str) -> list[dict]:
     found = []
-    for r in results:
-        if "hh.ru/" in r["url"]:
-            found.append({
-                "source": "HH.ru",
-                "name": r["title"],
-                "url": r["url"],
-                "snippet": r.get("snippet", ""),
-            })
+    for r in await ddg(f'"{name}" site:crunchbase.com/person', max_results=4):
+        if "crunchbase.com/person/" in r["url"]:
+            clean = re.sub(r"\s*[\|—\-]\s*Crunchbase.*", "", r["title"]).strip()
+            found.append({"source": "Crunchbase", "name": clean, "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
-
-async def search_rusprofile(name: str) -> list[dict]:
-    results = await ddg(f'"{name}" site:rusprofile.ru', max_results=3)
+async def search_angellist(name: str) -> list[dict]:
     found = []
-    for r in results:
-        if "rusprofile.ru" in r["url"]:
-            found.append({
-                "source": "RusProfile",
-                "name": r["title"],
-                "url": r["url"],
-                "snippet": r.get("snippet", ""),
-            })
+    for r in await ddg(f'"{name}" site:wellfound.com OR site:angel.co', max_results=3):
+        if "wellfound.com/" in r["url"] or "angel.co/" in r["url"]:
+            found.append({"source": "AngelList", "name": r["title"], "url": r["url"], "snippet": r.get("snippet", "")})
     return found
 
+async def search_github(name: str) -> list[dict]:
+    found = []
+    for r in await ddg(f'"{name}" site:github.com blockchain OR web3 OR crypto', max_results=3):
+        if "github.com/" in r["url"] and "/commit/" not in r["url"] and "/issues/" not in r["url"]:
+            found.append({"source": "GitHub", "name": r["title"], "url": r["url"], "snippet": r.get("snippet", "")})
+    return found
 
-async def search_crypto_articles(name: str, phone: str = "") -> list[dict]:
-    """Статьи / упоминания в крипто-медиа."""
-    crypto_kw = (
+async def search_articles(name: str, phone: str = "") -> list[dict]:
+    kw = (
         'crypto OR bitcoin OR BTC OR blockchain OR web3 OR investor '
-        'OR "venture capital" OR VC OR DeFi OR NFT OR fund OR стартап OR инвестор'
+        'OR "venture capital" OR VC OR DeFi OR NFT OR fund OR startup OR fintech'
     )
-    queries = [
-        f'"{name}" ({crypto_kw})',
-        f'"{name}" инвестиции OR криптовалюта OR блокчейн',
-    ]
+    queries = [f'"{name}" ({kw})']
     if phone:
         queries.append(f'"{name}" "{phone}"')
-
     seen, found = set(), []
-    tasks = [ddg(q, max_results=5) for q in queries]
-    batches = await asyncio.gather(*tasks, return_exceptions=True)
-    for batch in batches:
+    for batch in await asyncio.gather(*[ddg(q, max_results=5) for q in queries], return_exceptions=True):
         if not isinstance(batch, list):
             continue
         for r in batch:
             if r["url"] not in seen:
                 seen.add(r["url"])
-                found.append({"source": "Web", **r})
+                found.append({"source": "Article", **r})
     return found
 
-
-# ── Полный поиск ─────────────────────────────────────────────────────────────
-
+# ── Full parallel search ──────────────────────────────────────────────────────
 async def full_search(name: str, phone: str = "") -> dict:
-    tasks = {
-        "cr":       search_cryptorank(name),
-        "linkedin": search_linkedin(name),
-        "vk":       search_vk(name),
-        "twitter":  search_twitter(name),
-        "hh":       search_hh(name),
-        "rusprofile": search_rusprofile(name),
-        "articles": search_crypto_articles(name, phone),
-    }
-    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    out = {}
-    for key, res in zip(tasks.keys(), results):
-        out[key] = res if isinstance(res, list) else []
-    return out
+    keys = ["cr", "linkedin", "twitter", "crunchbase", "angellist", "github", "articles"]
+    coros = [
+        search_cryptorank(name),
+        search_linkedin(name),
+        search_twitter(name),
+        search_crunchbase(name),
+        search_angellist(name),
+        search_github(name),
+        search_articles(name, phone),
+    ]
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    return {k: (v if isinstance(v, list) else []) for k, v in zip(keys, results)}
 
-
-# ── Форматирование результата ─────────────────────────────────────────────────
-
-SOURCE_ICONS = {
-    "CryptoRank": "🟣",
-    "LinkedIn":   "🔵",
-    "VKontakte":  "🔴",
-    "Twitter/X":  "⚫",
-    "HH.ru":      "🏢",
-    "RusProfile": "📊",
-    "Web":        "🌐",
+# ── Report formatting ─────────────────────────────────────────────────────────
+ICONS = {
+    "CryptoRank": "🟣", "LinkedIn": "🔵", "Twitter/X": "⚫",
+    "Crunchbase": "🟠", "AngelList": "🟢", "GitHub": "⬛", "Article": "🌐",
 }
 
-def format_profile(r: dict) -> str:
-    icon = SOURCE_ICONS.get(r["source"], "🔗")
-    line = f'{icon} <b>{r["source"]}</b>: <a href="{r["url"]}">{r.get("name","")[:60]}</a>'
+def fmt_hit(r: dict) -> str:
+    icon = ICONS.get(r["source"], "🔗")
+    line = f'{icon} <a href="{r["url"]}">{r.get("name") or r.get("title","")[:70]}</a>'
     if r.get("snippet"):
-        line += f'\n    <i>{r["snippet"][:200]}</i>'
+        line += f'\n   <i>{r["snippet"][:200]}</i>'
     return line
 
 def build_report(name: str, phone: str, res: dict) -> str:
-    cr_hits    = res.get("cr", [])
-    li_hits    = res.get("linkedin", [])
-    vk_hits    = res.get("vk", [])
-    tw_hits    = res.get("twitter", [])
-    hh_hits    = res.get("hh", [])
-    rp_hits    = res.get("rusprofile", [])
-    art_hits   = res.get("articles", [])
-
+    cr   = res.get("cr", [])
+    li   = res.get("linkedin", [])
+    tw   = res.get("twitter", [])
+    cb   = res.get("crunchbase", [])
+    al   = res.get("angellist", [])
+    gh   = res.get("github", [])
+    art  = res.get("articles", [])
     total = sum(len(v) for v in res.values())
 
-    parts = [
-        f"<b>👤 {name}</b>" + (f"  |  <code>{phone}</code>" if phone else ""),
-        f"<i>Найдено профилей/упоминаний: {total}</i>",
-        "─────────────────────",
+    lines = [
+        f"<b>👤 {name}</b>" + (f"   <code>{phone}</code>" if phone else ""),
+        f"<i>Найдено: {total} результатов</i>",
+        "─" * 22,
     ]
 
-    if cr_hits:
-        parts.append(f"🟣 <b>CryptoRank</b> — {len(cr_hits)} профил(я):")
-        for r in cr_hits[:3]:
-            parts.append(f'  • <a href="{r["url"]}">{r.get("snippet") or r["url"]}</a>')
+    if cr:
+        lines.append(f"🟣 <b>CryptoRank</b> — {len(cr)}:")
+        for r in cr[:3]: lines.append("  " + fmt_hit(r))
     else:
-        parts.append("🟣 <b>CryptoRank</b>: не найден")
+        lines.append("🟣 <b>CryptoRank</b>: не найден")
 
-    if li_hits:
-        parts.append(f"\n🔵 <b>LinkedIn</b> — {len(li_hits)} профил(я):")
-        for r in li_hits[:3]:
-            parts.append(format_profile(r))
+    if li:
+        lines.append(f"\n🔵 <b>LinkedIn</b> — {len(li)}:")
+        for r in li[:3]: lines.append("  " + fmt_hit(r))
 
-    if vk_hits:
-        parts.append(f"\n🔴 <b>ВКонтакте</b> — {len(vk_hits)} профил(я):")
-        for r in vk_hits[:3]:
-            parts.append(format_profile(r))
+    if cb:
+        lines.append(f"\n🟠 <b>Crunchbase</b> — {len(cb)}:")
+        for r in cb[:3]: lines.append("  " + fmt_hit(r))
 
-    if tw_hits:
-        parts.append(f"\n⚫ <b>Twitter/X</b> — {len(tw_hits)}:")
-        for r in tw_hits[:2]:
-            parts.append(format_profile(r))
+    if al:
+        lines.append(f"\n🟢 <b>AngelList / Wellfound</b> — {len(al)}:")
+        for r in al[:2]: lines.append("  " + fmt_hit(r))
 
-    if hh_hits:
-        parts.append(f"\n🏢 <b>HH.ru</b> — {len(hh_hits)} резюме:")
-        for r in hh_hits[:2]:
-            parts.append(format_profile(r))
+    if tw:
+        lines.append(f"\n⚫ <b>Twitter / X</b> — {len(tw)}:")
+        for r in tw[:2]: lines.append("  " + fmt_hit(r))
 
-    if rp_hits:
-        parts.append(f"\n📊 <b>RusProfile</b> — {len(rp_hits)} записей:")
-        for r in rp_hits[:2]:
-            parts.append(format_profile(r))
+    if gh:
+        lines.append(f"\n⬛ <b>GitHub</b> — {len(gh)}:")
+        for r in gh[:2]: lines.append("  " + fmt_hit(r))
 
-    if art_hits:
-        parts.append(f"\n🌐 <b>Крипто/инвест статьи</b> — {len(art_hits)} упоминаний:")
-        for r in art_hits[:5]:
-            parts.append(format_profile(r))
+    if art:
+        lines.append(f"\n🌐 <b>Статьи / упоминания</b> — {len(art)}:")
+        for r in art[:5]: lines.append("  " + fmt_hit(r))
 
     if total == 0:
-        parts.append(
-            "\n⚠️ <i>Ничего не найдено в открытых источниках.</i>\n"
-            "Попробуй добавить город, должность или другой вариант написания имени."
-        )
+        lines.append("\n⚠️ <i>Ничего не найдено. Проверь написание имени.</i>")
 
-    return "\n".join(parts)
+    return "\n".join(lines)
 
 def split_msg(text: str) -> list[str]:
     if len(text) <= 4096:
@@ -377,147 +299,74 @@ def split_msg(text: str) -> list[str]:
     chunks, buf = [], ""
     for line in text.split("\n"):
         if len(buf) + len(line) + 1 > 4000:
-            chunks.append(buf)
-            buf = line
+            chunks.append(buf); buf = line
         else:
             buf += ("\n" if buf else "") + line
-    if buf:
-        chunks.append(buf)
+    if buf: chunks.append(buf)
     return chunks
 
-# ── Парсинг файла базы ────────────────────────────────────────────────────────
-
+# ── File parsing ──────────────────────────────────────────────────────────────
 def parse_file(content: bytes, filename: str) -> list[dict]:
     ext  = filename.lower().rsplit(".", 1)[-1]
     text = content.decode("utf-8", errors="replace")
     people = []
 
     if ext == "json":
-        data = json.loads(text)
+        data  = json.loads(text)
         items = data if isinstance(data, list) else data.get("users", data.get("data", []))
-        if isinstance(items, dict):
-            items = list(items.values())
+        if isinstance(items, dict): items = list(items.values())
         for item in items:
-            if not isinstance(item, dict):
-                continue
+            if not isinstance(item, dict): continue
             name = (
                 item.get("name") or item.get("fullName") or item.get("full_name")
                 or f"{item.get('first_name','').strip()} {item.get('last_name','').strip()}".strip()
-                or f"{item.get('имя','').strip()} {item.get('фамилия','').strip()}".strip()
             )
-            phone = str(item.get("phone", item.get("tel", item.get("телефон", "")))).strip()
+            phone = str(item.get("phone", item.get("tel", ""))).strip()
             if name and len(name.strip()) > 2:
                 people.append({"name": name.strip(), "phone": phone})
 
     elif ext == "csv":
-        reader = csv.DictReader(io.StringIO(text))
-        for row in reader:
+        for row in csv.DictReader(io.StringIO(text)):
             row = {k.lower().strip(): str(v).strip() for k, v in row.items()}
             name = (
                 row.get("name") or row.get("fullname") or row.get("full_name")
                 or f"{row.get('first_name','')} {row.get('last_name','')}".strip()
-                or f"{row.get('имя','')} {row.get('фамилия','')}".strip()
             )
-            phone = row.get("phone", row.get("tel", row.get("телефон", "")))
+            phone = row.get("phone", row.get("tel", ""))
             if name and len(name.strip()) > 2:
                 people.append({"name": name.strip(), "phone": phone or ""})
 
     else:  # TXT
         for line in text.splitlines():
             line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            phone_m = re.search(r"\+?\d[\d\-\(\)\s]{8,14}", line)
-            phone   = phone_m.group(0).strip() if phone_m else ""
-            name    = re.sub(r"\+?\d[\d\-\(\)\s]{8,14}", "", line).strip(" ,|;:")
+            if not line or line.startswith("#"): continue
+            pm    = re.search(r"\+?\d[\d\-\(\)\s]{8,14}", line)
+            phone = pm.group(0).strip() if pm else ""
+            name  = re.sub(r"\+?\d[\d\-\(\)\s]{8,14}", "", line).strip(" ,|;:")
             if name and len(name) > 3:
                 people.append({"name": name, "phone": phone})
 
     return people
 
-# ── Команды / хэндлеры ───────────────────────────────────────────────────────
-
-@dp.message(Command("start"))
-@dp.message(F.text == "❌ Отмена")
-async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "👋 <b>Бот поиска людей</b>\n\n"
-        "Ищу по <b>CryptoRank, LinkedIn, ВКонтакте, Twitter, HH.ru, RusProfile</b> и крипто-СМИ.\n\n"
-        "Выбери действие:",
-        reply_markup=main_kb(),
-    )
-
-# ── Поиск через кнопку ────────────────────────────────────────────────────────
-
-@dp.message(F.text == "🔍 Найти человека")
-async def btn_search(message: types.Message, state: FSMContext):
-    await state.set_state(Search.waiting_name)
-    await message.answer(
-        "✏️ Введи <b>Имя Фамилию</b> человека:\n\n"
-        "<i>Например: Иван Петров</i>",
-        reply_markup=cancel_kb(),
-    )
-
-@dp.message(StateFilter(Search.waiting_name))
-async def got_name(message: types.Message, state: FSMContext):
-    name = message.text.strip()
-    if len(name.split()) < 2:
-        await message.answer("⚠️ Нужно минимум <b>имя и фамилия</b>. Попробуй ещё раз:")
-        return
-
-    await state.update_data(name=name)
-    await state.set_state(Search.waiting_phone)
-    await message.answer(
-        f"📱 Есть номер телефона для <b>{name}</b>?\n\n"
-        "Введи номер <i>(например: +79001234567)</i>\n"
-        "или нажми <b>Пропустить →</b>",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="➡️ Пропустить"), KeyboardButton(text="❌ Отмена")]],
-            resize_keyboard=True,
-        ),
-    )
-
-@dp.message(StateFilter(Search.waiting_phone))
-async def got_phone(message: types.Message, state: FSMContext):
-    data  = await state.get_data()
-    name  = data["name"]
-    phone = "" if message.text.strip() in ("➡️ Пропустить", "❌ Отмена") else message.text.strip()
-
-    if message.text.strip() == "❌ Отмена":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=main_kb())
-        return
-
-    await state.clear()
-    await _do_search(message, name, phone)
-
-async def _do_search(message: types.Message, name: str, phone: str = ""):
-    status = await message.answer(
+# ── Core search runner ────────────────────────────────────────────────────────
+async def _do_search(chat_id: int, name: str, phone: str = ""):
+    status = await bot.send_message(
+        chat_id,
         f"⏳ <b>Ищу: {name}</b>\n\n"
-        "🟣 CryptoRank...\n"
-        "🔵 LinkedIn...\n"
-        "🔴 VK, Twitter...\n"
-        "🌐 Крипто-СМИ, HH, RusProfile...",
-        reply_markup=ReplyKeyboardRemove(),
+        "🟣 CryptoRank\n🔵 LinkedIn\n🟠 Crunchbase\n"
+        "🟢 AngelList\n⚫ Twitter/X\n⬛ GitHub\n🌐 Статьи...",
     )
-
     try:
-        res = await asyncio.wait_for(full_search(name, phone), timeout=50.0)
+        res = await asyncio.wait_for(full_search(name, phone), timeout=55.0)
     except asyncio.TimeoutError:
-        await status.edit_text(
-            f"⚠️ <b>Таймаут поиска для {name}.</b>\nПопробуй ещё раз.",
-        )
-        await message.answer("Выбери действие:", reply_markup=main_kb())
+        await status.edit_text(f"⚠️ <b>Таймаут для {name}.</b> Попробуй ещё раз.", reply_markup=back_menu_kb())
         return
 
-    # Сохраняем в CryptoRank файл
     if res.get("cr"):
         save_cr({
-            "name":       name,
-            "phone":      phone,
-            "timestamp":  datetime.utcnow().isoformat(),
-            "cr_count":   len(res["cr"]),
+            "name": name, "phone": phone,
+            "timestamp": datetime.utcnow().isoformat(),
+            "cr_count": len(res["cr"]),
             "cr_results": res["cr"],
         })
 
@@ -526,114 +375,200 @@ async def _do_search(message: types.Message, name: str, phone: str = ""):
 
     chunks = split_msg(report)
     for i, chunk in enumerate(chunks):
-        if i == len(chunks) - 1:
-            await message.answer(chunk, reply_markup=result_links_kb(name), disable_web_page_preview=True)
-        else:
-            await message.answer(chunk, disable_web_page_preview=True)
+        kb = result_links_kb(name) if i == len(chunks) - 1 else None
+        await bot.send_message(chat_id, chunk, reply_markup=kb, disable_web_page_preview=True)
 
-    await message.answer("Выбери действие:", reply_markup=main_kb())
+# ── /start & menu ─────────────────────────────────────────────────────────────
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "👋 <b>Бот поиска людей</b>\n\n"
+        "Ищу по: CryptoRank · LinkedIn · Crunchbase · AngelList · Twitter/X · GitHub · крипто-СМИ\n\n"
+        "Выбери действие:",
+        reply_markup=main_kb(),
+    )
 
-# ── Команда /search (как альтернатива) ───────────────────────────────────────
+@dp.callback_query(F.data == "main_menu")
+async def cb_main_menu(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text(
+        "👋 <b>Главное меню</b>\n\nВыбери действие:",
+        reply_markup=main_kb(),
+    )
 
+@dp.callback_query(F.data == "cancel")
+async def cb_cancel(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text("❌ Отменено.", reply_markup=main_kb())
+
+# ── Search flow (FSM via inline buttons) ──────────────────────────────────────
+@dp.callback_query(F.data == "start_search")
+async def cb_start_search(call: types.CallbackQuery, state: FSMContext):
+    await state.set_state(Search.waiting_name)
+    await call.message.edit_text(
+        "✏️ <b>Введи имя и фамилию</b> человека:\n\n"
+        "<i>Пример: John Smith</i>",
+        reply_markup=InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="cancel").as_markup(),
+    )
+
+@dp.message(StateFilter(Search.waiting_name))
+async def got_name(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name.split()) < 2:
+        await message.answer(
+            "⚠️ Нужно минимум <b>имя и фамилия</b>.\n<i>Пример: John Smith</i>",
+            reply_markup=InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="cancel").as_markup(),
+        )
+        return
+
+    await state.update_data(name=name)
+    await state.set_state(Search.waiting_phone)
+    await message.answer(
+        f"📱 Есть номер телефона для <b>{name}</b>?\n\n"
+        "Если да — введи его.\n"
+        "Если нет — нажми кнопку ниже 👇",
+        reply_markup=phone_kb(name),
+    )
+
+@dp.callback_query(F.data == "phone_skip", StateFilter(Search.waiting_phone))
+async def cb_phone_skip(call: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    name = data["name"]
+    await state.clear()
+    await call.message.edit_text(f"🔍 Запускаю поиск: <b>{name}</b>")
+    await _do_search(call.message.chat.id, name, "")
+
+@dp.message(StateFilter(Search.waiting_phone))
+async def got_phone(message: types.Message, state: FSMContext):
+    data  = await state.get_data()
+    name  = data["name"]
+    phone = message.text.strip()
+    await state.clear()
+    await message.answer(f"🔍 Запускаю поиск: <b>{name}</b>  <code>{phone}</code>")
+    await _do_search(message.chat.id, name, phone)
+
+# ── /search command ───────────────────────────────────────────────────────────
 @dp.message(Command("search"))
 async def cmd_search(message: types.Message, state: FSMContext):
     raw = message.text.split(maxsplit=1)
     if len(raw) < 2 or len(raw[1].strip().split()) < 2:
         await state.set_state(Search.waiting_name)
-        await message.answer("✏️ Введи <b>Имя Фамилию</b>:", reply_markup=cancel_kb())
+        await message.answer(
+            "✏️ <b>Введи имя и фамилию:</b>",
+            reply_markup=InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="cancel").as_markup(),
+        )
         return
     parts = raw[1].strip().split()
     phone, name_parts = "", []
     for p in parts:
-        if re.match(r"^\+?\d{7,15}$", p):
-            phone = p
-        else:
-            name_parts.append(p)
+        if re.match(r"^\+?\d{7,15}$", p): phone = p
+        else: name_parts.append(p)
     if len(name_parts) < 2:
-        await message.answer("⚠️ Нужно минимум имя и фамилия.")
-        return
-    await _do_search(message, " ".join(name_parts), phone)
+        await message.answer("⚠️ Нужно минимум имя и фамилия."); return
+    await _do_search(message.chat.id, " ".join(name_parts), phone)
 
-# ── CryptoRank список ─────────────────────────────────────────────────────────
-
-@dp.message(F.text == "📋 CryptoRank список")
+# ── CryptoRank list ───────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "show_found")
 @dp.message(Command("found"))
-async def btn_found(message: types.Message, state: FSMContext):
-    await state.clear()
-    data = load_cr()
+async def show_found(event, state: FSMContext = None):
+    if state: await state.clear()
+    is_cb = isinstance(event, types.CallbackQuery)
+    data  = load_cr()
     if not data:
-        await message.answer(
-            "📂 <b>CryptoRank: пусто</b>\n\nНикого ещё не нашли. Попробуй поиск.",
-            reply_markup=main_kb(),
-        )
+        text = "📂 <b>CryptoRank: пусто</b>\n\nНикого ещё не нашли."
+        if is_cb: await event.message.edit_text(text, reply_markup=back_menu_kb())
+        else: await event.answer(text, reply_markup=back_menu_kb())
         return
     lines = [f"📋 <b>Найдены на CryptoRank ({len(data)}):</b>\n"]
     for i, e in enumerate(data, 1):
-        n  = e.get("name", "—")
-        ts = e.get("timestamp", "")[:10]
-        c  = e.get("cr_count", 0)
+        n  = e.get("name", "—"); ts = e.get("timestamp", "")[:10]; c = e.get("cr_count", 0)
         lines.append(f"{i}. <b>{n}</b> · {c} рез. [{ts}]")
         for r in e.get("cr_results", [])[:1]:
-            lines.append(f"   🔗 <a href='{r.get('url','')}'>{r.get('url','')[:60]}</a>")
-    await message.answer("\n".join(lines), reply_markup=main_kb(), disable_web_page_preview=True)
+            lines.append(f"   🔗 <a href='{r.get('url','')}'>{r.get('url','')[:55]}</a>")
+    text = "\n".join(lines)
+    if is_cb: await event.message.edit_text(text, reply_markup=back_menu_kb(), disable_web_page_preview=True)
+    else: await event.answer(text, reply_markup=back_menu_kb(), disable_web_page_preview=True)
 
-# ── Загрузка базы ─────────────────────────────────────────────────────────────
-
-@dp.message(F.text == "📂 Загрузить базу")
-async def btn_upload(message: types.Message):
-    if ADMIN_ID and message.from_user.id != ADMIN_ID:
-        await message.answer("❌ Только администратор может загружать файлы.")
-        return
-    await message.answer(
-        "📂 <b>Загрузка базы</b>\n\n"
-        "Пришли файл (JSON / CSV / TXT).\n\n"
-        "<b>Ожидаемые поля:</b>\n"
-        "• JSON: <code>name</code> / <code>fullName</code> / <code>first_name + last_name</code>\n"
-        "• CSV: колонки <code>name</code>, <code>phone</code>\n"
-        "• TXT: по одному имени на строку\n\n"
-        "Бот автоматически начнёт поиск по каждому человеку.",
-        reply_markup=cancel_kb(),
+# ── Help ──────────────────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "show_help")
+async def cb_help(call: types.CallbackQuery):
+    await call.message.edit_text(
+        "❓ <b>Справка</b>\n\n"
+        "<b>Источники поиска:</b>\n"
+        "🟣 CryptoRank — крипто-профили\n"
+        "🔵 LinkedIn — профессиональные профили\n"
+        "🟠 Crunchbase — стартапы и инвесторы\n"
+        "🟢 AngelList / Wellfound — стартап-сообщество\n"
+        "⚫ Twitter / X — крипто-упоминания\n"
+        "⬛ GitHub — блокчейн-разработчики\n"
+        "🌐 Крипто-СМИ — статьи и публикации\n\n"
+        "<b>Как использовать:</b>\n"
+        "1. Нажми <b>🔍 Найти человека</b>\n"
+        "2. Введи имя и фамилию\n"
+        "3. Укажи телефон или пропусти\n"
+        "4. Бот выдаст результаты по всем источникам\n\n"
+        "<b>Загрузка базы:</b>\n"
+        "Нажми <b>📂 Загрузить базу</b> и пришли файл.\n"
+        "Поддерживается: JSON · CSV · TXT",
+        reply_markup=back_menu_kb(),
     )
 
+# ── Upload info ───────────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "upload_info")
+async def cb_upload_info(call: types.CallbackQuery):
+    if ADMIN_ID and call.from_user.id != ADMIN_ID:
+        await call.answer("❌ Только администратор может загружать файлы.", show_alert=True)
+        return
+    await call.message.edit_text(
+        "📂 <b>Загрузка базы</b>\n\n"
+        "Пришли файл прямо в этот чат.\n\n"
+        "<b>Форматы и структура:</b>\n"
+        "• <b>JSON</b>: поля <code>name</code> / <code>fullName</code> / <code>first_name + last_name</code>\n"
+        "• <b>CSV</b>: колонки <code>name</code>, <code>phone</code>\n"
+        "• <b>TXT</b>: одно имя на строку\n\n"
+        "После загрузки бот автоматически начнёт поиск по каждому.",
+        reply_markup=back_menu_kb(),
+    )
+
+# ── File upload handler ───────────────────────────────────────────────────────
 @dp.message(F.document)
 async def handle_file(message: types.Message, state: FSMContext):
     await state.clear()
-
     if ADMIN_ID and message.from_user.id != ADMIN_ID:
-        await message.answer("❌ Только администратор может загружать файлы.")
+        await message.answer("❌ Только администратор может загружать файлы.", reply_markup=back_menu_kb())
         return
 
-    doc      = message.document
+    doc = message.document
     filename = doc.file_name or "file.txt"
-    ext      = filename.lower().rsplit(".", 1)[-1]
-
+    ext = filename.lower().rsplit(".", 1)[-1]
     if ext not in ("json", "csv", "txt"):
         await message.answer(f"⚠️ Формат <b>.{ext}</b> не поддерживается. Используй JSON, CSV или TXT.")
         return
 
-    status = await message.answer(f"📥 Загружаю <b>{filename}</b>...", reply_markup=ReplyKeyboardRemove())
+    status = await message.answer(f"📥 Загружаю <b>{filename}</b>...")
     try:
         file = await bot.get_file(doc.file_id)
         buf  = io.BytesIO()
         await bot.download_file(file.file_path, buf)
         people = parse_file(buf.getvalue(), filename)
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка: {e}")
-        await message.answer("Выбери действие:", reply_markup=main_kb())
+        await status.edit_text(f"❌ Ошибка чтения: {e}", reply_markup=back_menu_kb())
         return
 
     if not people:
         await status.edit_text(
-            "⚠️ Не удалось найти имена в файле.\n"
-            "Проверь структуру: нужны поля <code>name</code>, <code>fullName</code> или <code>first_name/last_name</code>."
+            "⚠️ Не удалось извлечь имена из файла.\n"
+            "Проверь структуру: нужны поля <code>name</code> или <code>first_name + last_name</code>.",
+            reply_markup=back_menu_kb(),
         )
-        await message.answer("Выбери действие:", reply_markup=main_kb())
         return
 
     await status.edit_text(
         f"✅ <b>Файл принят!</b>\n"
         f"👥 Найдено: <b>{len(people)}</b> человек\n\n"
-        "🚀 Начинаю поиск по каждому..."
+        "🚀 Начинаю поиск по каждому...\n"
+        "<i>Результаты появляются по мере нахождения</i>"
     )
 
     cr_found = 0
@@ -641,84 +576,49 @@ async def handle_file(message: types.Message, state: FSMContext):
         name  = person["name"]
         phone = person.get("phone", "")
 
-        progress = await message.answer(
-            f"⏳ <b>[{i}/{len(people)}]</b> Ищу: <b>{name}</b>"
-            + (f" · <code>{phone}</code>" if phone else "")
+        prog = await message.answer(
+            f"⏳ <b>[{i}/{len(people)}]</b>  {name}"
+            + (f"  <code>{phone}</code>" if phone else "")
         )
-
         try:
-            res = await asyncio.wait_for(full_search(name, phone), timeout=50.0)
+            res = await asyncio.wait_for(full_search(name, phone), timeout=55.0)
         except asyncio.TimeoutError:
-            await progress.edit_text(
-                f"⚠️ <b>[{i}/{len(people)}] {name}</b> — таймаут, пропускаю."
-            )
+            await prog.edit_text(f"⚠️ [{i}/{len(people)}] <b>{name}</b> — таймаут, пропускаю.")
             await asyncio.sleep(2)
             continue
 
         if res.get("cr"):
             cr_found += 1
             save_cr({
-                "name":       name,
-                "phone":      phone,
-                "timestamp":  datetime.utcnow().isoformat(),
-                "cr_count":   len(res["cr"]),
+                "name": name, "phone": phone,
+                "timestamp": datetime.utcnow().isoformat(),
+                "cr_count": len(res["cr"]),
                 "cr_results": res["cr"],
             })
 
-        await progress.delete()
-        report = build_report(name, phone, res)
-        for chunk in split_msg(report):
+        await prog.delete()
+        for chunk in split_msg(build_report(name, phone, res)):
             await message.answer(chunk, disable_web_page_preview=True)
-        await message.answer(
-            f"🔗 <b>Ссылки для {name}:</b>",
-            reply_markup=result_links_kb(name),
-        )
-
-        # Пауза между запросами (защита от блокировки DDG)
+        await message.answer(f"🔗 Ссылки для <b>{name}</b>:", reply_markup=result_links_kb(name))
         await asyncio.sleep(4)
 
-    # Итог
-    summary_lines = [
-        f"✅ <b>Готово!</b>",
-        f"👥 Обработано: <b>{len(people)}</b> человек",
-        f"🟣 Найдено на CryptoRank: <b>{cr_found}</b>",
-    ]
-    await message.answer("\n".join(summary_lines), reply_markup=main_kb())
+    kb = InlineKeyboardBuilder()
+    if cr_found: kb.button(text="📋 CryptoRank список", callback_data="show_found")
+    kb.button(text="🔍 Новый поиск", callback_data="start_search")
+    kb.button(text="🏠 Меню", callback_data="main_menu")
+    kb.adjust(1)
 
-    # Отправляем итоговый файл если есть находки
-    if cr_found > 0 and os.path.exists(CR_FILE):
-        await message.answer_document(
-            FSInputFile(CR_FILE),
-            caption=f"📁 cryptorank_results.json · {cr_found} новых записей"
-        )
-
-# ── Помощь ────────────────────────────────────────────────────────────────────
-
-@dp.message(F.text == "❓ Помощь")
-@dp.message(Command("help"))
-async def btn_help(message: types.Message, state: FSMContext):
-    await state.clear()
     await message.answer(
-        "❓ <b>Справка</b>\n\n"
-        "<b>Источники поиска:</b>\n"
-        "🟣 CryptoRank — профили крипто-деятелей\n"
-        "🔵 LinkedIn — профессиональные профили\n"
-        "🔴 ВКонтакте — соцсеть\n"
-        "⚫ Twitter/X — крипто-упоминания\n"
-        "🏢 HH.ru — резюме\n"
-        "📊 RusProfile — реестр юрлиц/ИП\n"
-        "🌐 Крипто-СМИ — статьи и публикации\n\n"
-        "<b>Как искать:</b>\n"
-        "Нажми <b>🔍 Найти человека</b> → введи имя → (опционально) телефон\n\n"
-        "<b>Загрузка базы:</b>\n"
-        "Нажми <b>📂 Загрузить базу</b> и пришли файл.\n"
-        "Бот обойдёт всех и выдаст результаты.\n\n"
-        "<b>Форматы файла:</b> JSON · CSV · TXT",
-        reply_markup=main_kb(),
+        f"✅ <b>Готово!</b>\n"
+        f"👥 Обработано: <b>{len(people)}</b>\n"
+        f"🟣 Найдено на CryptoRank: <b>{cr_found}</b>",
+        reply_markup=kb.as_markup(),
     )
 
-# ── Запуск ────────────────────────────────────────────────────────────────────
+    if cr_found and os.path.exists(CR_FILE):
+        await message.answer_document(FSInputFile(CR_FILE), caption=f"📁 cryptorank_results.json · {cr_found} записей")
 
+# ── Run ───────────────────────────────────────────────────────────────────────
 async def main():
     print("✅ Бот запущен.")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
