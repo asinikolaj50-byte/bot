@@ -10,7 +10,8 @@ from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 
 TOKEN    = os.getenv("TELEGRAM_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
+_admin_raw = os.getenv("ADMIN_ID", "").strip()
+ADMIN_ID = int(_admin_raw) if _admin_raw.isdigit() else None
 
 bot = Bot(token=TOKEN, default_properties=DefaultBotProperties(parse_mode="Markdown"))
 dp  = Dispatcher()
